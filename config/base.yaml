@@ -1,0 +1,10 @@
+rtk_test_recorder:
+  ros__parameters:
+    port: /dev/ttyACM0
+    baud_rate: 115200
+    frame_id: base_rtk
+    receiver_role: base
+    log_directory: ./data
+    publish_heading: false
+    correction_period_sec: 1.0
+    line_timeout_sec: 2.0

@@ -1,0 +1,36 @@
+#include "std_msgs/msg/Header.idl"
+
+module rtk_accuracy_test {
+  module msg {
+    struct RtkStatus {
+      std_msgs::msg::Header header;
+      boolean valid;
+      string<32> utc_time;
+      string<64> solution_status;
+      string<64> position_type;
+      uint8 state_code;
+      double latitude;
+      double longitude;
+      double altitude;
+      double latitude_std;
+      double longitude_std;
+      double altitude_std;
+      double gst_std_latitude;
+      double gst_std_longitude;
+      double gst_std_altitude;
+      double differential_age;
+      int32 differential_station_id;
+      uint16 satellites_used;
+      double hdop;
+      double heading;
+      double pitch;
+      double heading_std;
+      double pitch_std;
+      double baseline_length;
+      uint32 lines_received;
+      uint32 checksum_errors;
+      uint32 parse_errors;
+      uint32 interline_gap_errors;
+    };
+  };
+};
