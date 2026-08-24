@@ -29,6 +29,7 @@ install(DIRECTORY config launch scripts DESTINATION share/${PROJECT_NAME}
   PATTERN "*.pyc" EXCLUDE
 )
 install(PROGRAMS
+  scripts/rtk_amap_view.py
   scripts/rtk_offline_analysis.py
   scripts/serial_capture.py
   DESTINATION lib/${PROJECT_NAME}
