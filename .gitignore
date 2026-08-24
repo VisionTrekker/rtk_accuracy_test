@@ -1,0 +1,50 @@
+# ROS 2 / colcon generated output
+/build/
+/install/
+/log/
+**/build/
+**/install/
+**/log/
+
+# CMake and IDE output
+**/cmake-build-*/
+**/.idea/
+**/.vscode/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+symlink_install_manifest.txt
+
+# Test recordings and generated analysis output
+/data/
+/rtk_data/
+**/data/
+**/rtk_data/
+*.raw
+*.tsv
+*.bag
+*.db3
+*.mcap
+*.sqlite3
+
+# Local sample exports and archives
+/rtk.csv
+/gga.txt
+/rtk_amap_view.html
+/rtk.zip
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Secrets and local credentials
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+*~
