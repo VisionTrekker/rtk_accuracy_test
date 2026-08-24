@@ -1,14 +1,75 @@
 # rtk_accuracy_test
 
-ROS 2 Humble package for the BX100 field-test plan in
-[`../RTK_TEST_PLAN.md`](../RTK_TEST_PLAN.md). This package is intended for a
-development laptop or a fully provisioned computer; it is **not required on
-the low-privilege RK3588 board**. Use the root-level
-[`../serial_capture.py`](../serial_capture.py) and
-[`../serial_capture.sh`](../serial_capture.sh) for minimal board-side
-recording.
+BX100 双 GNSS 基准站/移动站的 ROS 2 Humble RTK 测试驱动、低权限串口录制器与离线分析工具。
 
-## Build
+---
+
+## 📋 文档入口
+
+| 文档 | 内容 |
+|---|---|
+| [项目背景与原始需求](../QY_RTK.md) | 接收机消息格式和测试需求 |
+| [外场测试方案](../RTK_TEST_PLAN.md) | 静态点、局部测试网、公里级闭环与现场记录表 |
+| [未知配置冒烟测试](../docs/20260821_unknown_config_smoke_test.md) | 兼容性验证，不属于正式精度结果 |
+| [5 Hz 接收机冒烟测试](../docs/20260824_5hz_receiver_smoke_test.md) | 带宽与数据完整性验证，不属于正式精度结果 |
+
+## 🗂️ 工具与运行环境
+
+`src/bx100_test_recorder.cpp` 是 ROS 2 节点，面向开发笔记本或有完整权限的计算机。
+`scripts/serial_capture.py` 是纯 Python 标准库录制器，面向小车低权限 RK3588：不需要
+ROS、`pyserial`、编译器或 `sudo`。
+
+| 工具 | 运行位置 | 用途 |
+|---|---|---|
+| `scripts/serial_capture.py` | 低权限 RK3588 | 保存原始串口字节流和逐行主机时间索引 |
+| `bx100_test_recorder` | 开发机 | 发布 ROS 2 话题并保存原始串口行 |
+| `scripts/rtk_offline_analysis.py` | 开发机 | 清点消息、校验帧、导出 GGA/ENU 初步结果 |
+
+## 🔧 RK3588 低权限采集
+
+从工作区根目录复制录制器到 RK3588：
+
+```bash
+scp rtk_accuracy_test/scripts/serial_capture.py <user>@<rk3588_ip>:/home/<user>/
+```
+
+进入 RK3588 后确认串口设备（例如 `/dev/ttyUSB0`），录制 5 分钟：
+
+```bash
+mkdir -p ~/rtk_data/session_001
+python3 ~/serial_capture.py \
+  --port /dev/ttyUSB0 \
+  --baud 115200 \
+  --duration 300 \
+  --raw-output ~/rtk_data/session_001/rover_001.raw \
+  --index-output ~/rtk_data/session_001/rover_001.tsv
+```
+
+持续录制时省略 `--duration`，按 `Ctrl-C` 停止：
+
+```bash
+python3 ~/serial_capture.py \
+  --port /dev/ttyUSB0 \
+  --raw-output ~/rtk_data/session_001/rover.raw \
+  --index-output ~/rtk_data/session_001/rover.tsv
+```
+
+脚本生成 `.raw`（完整原始字节流）与 `.tsv`（每条完整串口行及 RK3588 接收时间）。
+接收机 UTC 仍保留在 `GGA`、`ZDA`、`TIMEA` 等原始消息中。录制结束后取回数据：
+
+```bash
+scp -r <user>@<rk3588_ip>:/home/<user>/rtk_data/session_001 ./data/
+```
+
+建议在 RK3588 使用 `tmux`，避免 SSH 中断停止录制：
+
+```bash
+tmux new -s rtk_capture
+# 在 tmux 中执行录制命令；Ctrl-B 后按 D 可退出但保持运行
+tmux attach -t rtk_capture
+```
+
+## ⚙️ ROS 2 Humble 构建
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -16,7 +77,7 @@ colcon build --packages-select rtk_accuracy_test --symlink-install
 source install/setup.bash
 ```
 
-## Record the rover
+## 📡 ROS 2 移动站录制
 
 Set the receiver to emit the configured logs on `COM1`, connect only the rover
 to the notebook, and run:
@@ -31,7 +92,15 @@ tab, original line) and publishes `/fix`, `/heading`, `/rtk/status`, and
 `/rtk/raw`. `/rtk/status` is diagnostic and preserves the receiver state;
 unknown receiver position-type strings are not treated as fixed.
 
-## Offline first pass
+`GGA` talker IDs are not restricted: for example, `$GNGGA` is parsed as GGA.
+When `BESTPOSA` is absent, `/rtk/status` maps the NMEA GGA quality field to a
+conservative class (`2` is `DGPS`, `4` is `RTK_FIXED`, and `5` is
+`RTK_FLOAT`). `HDT` sentences are retained in `/rtk/status` but do not contain
+solution quality or standard deviation, so `/heading` is not published from
+HDT by default. Set `publish_unqualified_hdt:=true` only after its source and
+validity have been verified.
+
+## 📊 离线初步分析
 
 ```bash
 python3 scripts/rtk_offline_analysis.py data/session_001/rover_*.raw \
@@ -49,3 +118,13 @@ base station, and use `config/base.yaml` (or `ros2 launch
 rtk_accuracy_test base.launch.py`). Record `base_before.raw` and
 `base_after.raw` in separate session directories; do not connect both
 receivers to the notebook at the same time.
+
+## 🔐 数据与提交约定
+
+原始串口数据、rosbag、构建目录、日志、IDE 配置、压缩包和密钥文件均被工作区
+`.gitignore` 排除。提交前检查：
+
+```bash
+git status --short
+git diff --cached --stat
+```

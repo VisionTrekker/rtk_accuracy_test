@@ -47,6 +47,23 @@ std::string without_checksum(const std::string &line)
   return line.substr(0, star == std::string::npos ? line.size() : star);
 }
 
+std::vector<std::string> split_protocol_frames(const std::string &line)
+{
+  // Some receivers can start a new ASCII log before a long diagnostic log
+  // emits its line ending. Preserve the physical line in the raw log, then
+  // recover each protocol frame for parsing at '$' or '#'.
+  std::vector<std::string> frames;
+  size_t begin = 0;
+  for (size_t index = 1; index < line.size(); ++index) {
+    if (line[index] == '$' || line[index] == '#') {
+      frames.push_back(line.substr(begin, index - begin));
+      begin = index;
+    }
+  }
+  frames.push_back(line.substr(begin));
+  return frames;
+}
+
 bool nmea_checksum_valid(const std::string &line)
 {
   if (line.empty() || line.front() != '$') return false;
@@ -59,6 +76,29 @@ bool nmea_checksum_valid(const std::string &line)
   unsigned char actual = 0;
   for (size_t i = 1; i < star; ++i) actual ^= static_cast<unsigned char>(line[i]);
   return actual == expected;
+}
+
+bool ascii_crc32_valid(const std::string &line)
+{
+  // BX100 ASCII logs use the NovAtel-compatible CRC-32: bytes after '#',
+  // initial CRC 0, reversed polynomial 0xEDB88320, no final XOR.
+  if (line.empty() || line.front() != '#') return false;
+  const auto star = line.rfind('*');
+  if (star == std::string::npos || star + 9 != line.size()) return false;
+  unsigned long expected = 0;
+  try {
+    size_t consumed = 0;
+    expected = std::stoul(line.substr(star + 1, 8), &consumed, 16);
+    if (consumed != 8 || expected > 0xffffffffUL) return false;
+  } catch (...) { return false; }
+  uint32_t crc = 0;
+  for (size_t index = 1; index < star; ++index) {
+    crc ^= static_cast<uint8_t>(line[index]);
+    for (int bit = 0; bit < 8; ++bit) {
+      crc = (crc & 1U) ? ((crc >> 1U) ^ 0xEDB88320U) : (crc >> 1U);
+    }
+  }
+  return crc == static_cast<uint32_t>(expected);
 }
 
 double number(const std::string &value, double fallback = kNan)
@@ -119,6 +159,8 @@ struct BestPos {
 
 struct Heading {
   bool valid{false};
+  bool qualified{false};
+  std::string source;
   std::string solution_status, position_type;
   double baseline{kNan}, heading{kNan}, pitch{kNan};
   double heading_std{kNan}, pitch_std{kNan};
@@ -156,7 +198,8 @@ bool parse_gst(const std::string &line, Gst &out)
 
 bool parse_bestpos(const std::string &line, BestPos &out)
 {
-  if (line.find("#BESTPOSA") == std::string::npos && line.find("#BESTGNSSPOSA") == std::string::npos) return false;
+  if (line.rfind("#BESTPOSA", 0) != 0 && line.rfind("#BESTGNSSPOSA", 0) != 0) return false;
+  if (!ascii_crc32_valid(line)) return false;
   const auto semi = line.find(';');
   if (semi == std::string::npos) return false;
   const auto fields = split(without_checksum(line.substr(semi + 1)), ',');
@@ -175,20 +218,77 @@ bool parse_bestpos(const std::string &line, BestPos &out)
 
 bool parse_heading(const std::string &line, Heading &out)
 {
-  if (line.find("#UNIHEADINGA") == std::string::npos) return false;
+  if (line.rfind("#UNIHEADINGA", 0) != 0) return false;
+  if (!ascii_crc32_valid(line)) return false;
   const auto semi = line.find(';');
   if (semi == std::string::npos) return false;
   const auto fields = split(without_checksum(line.substr(semi + 1)), ',');
   if (fields.size() < 8) return false;
   out.solution_status = fields[0];
   out.position_type = fields[1];
+  out.source = "UNIHEADINGA";
   out.baseline = number(fields[2]);
   out.heading = number(fields[3]);
   out.pitch = number(fields[4]);
   out.heading_std = number(fields[6]);
   out.pitch_std = number(fields[7]);
   out.valid = std::isfinite(out.heading);
+  out.qualified = out.valid && out.solution_status == "SOL_COMPUTED";
   return true;
+}
+
+bool parse_hdt(const std::string &line, Heading &out)
+{
+  if (!nmea_checksum_valid(line)) return false;
+  const auto fields = split(without_checksum(line), ',');
+  if (fields.size() < 3 || fields[0].size() < 6 || fields[0].substr(3) != "HDT") return false;
+  const double heading = number(fields[1]);
+  if (!std::isfinite(heading) || heading < 0.0 || heading > 360.0 || fields[2] != "T") return false;
+  out.valid = true;
+  // NMEA HDT contains no solution quality or heading standard deviation.
+  // Preserve it in /rtk/status, but do not call it a qualified RTK heading.
+  out.qualified = false;
+  out.source = "HDT";
+  out.solution_status = "NMEA_HDT";
+  out.position_type = "HEADING_UNQUALIFIED";
+  // NMEA HDT is already clockwise from true north.
+  out.heading = std::fmod(heading, 360.0);
+  out.pitch = kNan;
+  out.heading_std = kNan;
+  out.pitch_std = kNan;
+  out.baseline = kNan;
+  return true;
+}
+
+std::string gga_position_type(int quality)
+{
+  switch (quality) {
+    case 0: return "NO_FIX";
+    case 1: return "SINGLE";
+    case 2: return "DGPS";
+    case 3: return "PPS";
+    case 4: return "RTK_FIXED";
+    case 5: return "RTK_FLOAT";
+    case 6: return "ESTIMATED";
+    case 7: return "MANUAL";
+    case 8: return "SIMULATION";
+    default: return "GGA_UNKNOWN";
+  }
+}
+
+uint8_t gga_state_code(int quality)
+{
+  switch (quality) {
+    case 4: return 1;  // RTK fixed according to NMEA GGA quality.
+    case 5: return 2;  // RTK float.
+    case 2: return 3;  // Differential GNSS.
+    case 1:
+    case 3:
+    case 6:
+    case 7:
+    case 8: return 4;  // Non-RTK solution.
+    default: return 0;
+  }
 }
 
 uint8_t state_code(const std::string &position_type, const std::string &solution_status)
@@ -242,6 +342,7 @@ public:
     receiver_role_ = declare_parameter<std::string>("receiver_role", "rover");
     heading_offset_ = declare_parameter<double>("heading_offset_deg", 0.0);
     publish_heading_ = declare_parameter<bool>("publish_heading", true);
+    publish_unqualified_hdt_ = declare_parameter<bool>("publish_unqualified_hdt", false);
     fs::create_directories(log_directory_);
     const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     std::tm tm{}; localtime_r(&now, &tm);
@@ -275,7 +376,9 @@ private:
       const auto epoch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
       if (raw_.is_open()) raw_ << epoch_ns << '\t' << line << '\n' << std::flush;
       std_msgs::msg::String raw_msg; raw_msg.data = line; raw_pub_->publish(raw_msg);
-      process(line, receipt);
+      for (const auto &frame : split_protocol_frames(line)) {
+        if (!frame.empty()) process(frame, receipt);
+      }
     }
     if (rx_.size() > 65536) { rx_.clear(); ++parse_errors_; }
   }
@@ -290,12 +393,25 @@ private:
     } else if (line.size() > 6 && line[0] == '$' && line.substr(3, 3) == "GST") {
       if (parse_gst(line, gst)) { last_gst_ = gst; parsed = true; }
       else ++checksum_errors_;
-    } else if (line.find("#BESTPOSA") != std::string::npos || line.find("#BESTGNSSPOSA") != std::string::npos) {
+    } else if (line.rfind("#BESTPOSA", 0) == 0 || line.rfind("#BESTGNSSPOSA", 0) == 0) {
       if (parse_bestpos(line, best)) { last_best_ = best; parsed = true; }
       else ++parse_errors_;
-    } else if (line.find("#UNIHEADINGA") != std::string::npos) {
-      if (parse_heading(line, heading)) { last_heading_ = heading; parsed = true; if (publish_heading_) publish_heading(receipt); }
+    } else if (line.rfind("#UNIHEADINGA", 0) == 0) {
+      if (parse_heading(line, heading)) {
+        last_heading_ = heading;
+        parsed = true;
+        if (publish_heading_ && last_heading_.qualified) publish_heading(receipt);
+      }
       else ++parse_errors_;
+    } else if (line.size() > 6 && line[0] == '$' && line.substr(3, 3) == "HDT") {
+      if (parse_hdt(line, heading)) {
+        last_heading_ = heading;
+        parsed = true;
+        if (publish_heading_ && publish_unqualified_hdt_) publish_heading(receipt);
+      }
+      else ++checksum_errors_;
+    } else if (line.front() == '#' && !ascii_crc32_valid(line)) {
+      ++checksum_errors_;
     }
     if (parsed) publish_status(receipt);
   }
@@ -317,8 +433,15 @@ private:
 
   void publish_heading(const rclcpp::Time &stamp)
   {
-    const double clockwise_from_north = std::fmod(360.0 - last_heading_.heading + heading_offset_, 360.0);
-    const double yaw = -clockwise_from_north * M_PI / 180.0;
+    // /heading is a standard ROS ENU quaternion: yaw is counter-clockwise
+    // from east. RtkStatus.heading remains clockwise from true north.
+    double clockwise_from_north = last_heading_.heading;
+    if (last_heading_.source == "UNIHEADINGA") {
+      // BX100 UNIHEADINGA uses counter-clockwise angle from true north.
+      clockwise_from_north = 360.0 - clockwise_from_north;
+    }
+    clockwise_from_north = std::fmod(clockwise_from_north + heading_offset_ + 360.0, 360.0);
+    const double yaw = (90.0 - clockwise_from_north) * M_PI / 180.0;
     geometry_msgs::msg::QuaternionStamped message; message.header.stamp = stamp; message.header.frame_id = frame_id_;
     message.quaternion.z = std::sin(yaw / 2.0); message.quaternion.w = std::cos(yaw / 2.0);
     heading_pub_->publish(message);
@@ -328,21 +451,32 @@ private:
   {
     rtk_accuracy_test::msg::RtkStatus message; message.header.stamp = stamp; message.header.frame_id = frame_id_;
     message.valid = last_gga_.valid || last_best_.valid;
-    message.utc_time = last_gga_.utc; message.solution_status = last_best_.solution_status; message.position_type = last_best_.position_type;
-    message.state_code = state_code(last_best_.position_type, last_best_.solution_status);
+    message.utc_time = last_gga_.utc;
+    message.solution_status = last_best_.valid ? last_best_.solution_status : "GGA_ONLY";
+    message.position_type = last_best_.valid ? last_best_.position_type : gga_position_type(last_gga_.quality);
+    message.state_code = last_best_.valid ?
+      state_code(last_best_.position_type, last_best_.solution_status) : gga_state_code(last_gga_.quality);
     message.latitude = last_gga_.latitude; message.longitude = last_gga_.longitude; message.altitude = last_gga_.altitude;
     if (last_best_.valid) { message.latitude = last_best_.latitude; message.longitude = last_best_.longitude; message.altitude = last_best_.altitude; }
     message.latitude_std = last_best_.std_lat; message.longitude_std = last_best_.std_lon; message.altitude_std = last_best_.std_alt;
     message.gst_std_latitude = last_gst_.std_lat; message.gst_std_longitude = last_gst_.std_lon; message.gst_std_altitude = last_gst_.std_alt;
     message.differential_age = last_gga_.differential_age; message.differential_station_id = last_gga_.station_id;
     message.satellites_used = std::max(0, last_gga_.satellites); message.hdop = last_gga_.hdop;
-    message.heading = last_heading_.heading; message.pitch = last_heading_.pitch; message.heading_std = last_heading_.heading_std; message.pitch_std = last_heading_.pitch_std; message.baseline_length = last_heading_.baseline;
+    message.heading_valid = last_heading_.valid && last_heading_.qualified;
+    message.heading_source = last_heading_.source;
+    double heading_cw_from_true_north = last_heading_.heading;
+    if (last_heading_.source == "UNIHEADINGA") {
+      heading_cw_from_true_north = std::fmod(360.0 - heading_cw_from_true_north, 360.0);
+    }
+    message.heading = heading_cw_from_true_north;
+    message.pitch = last_heading_.pitch; message.heading_std = last_heading_.heading_std; message.pitch_std = last_heading_.pitch_std; message.baseline_length = last_heading_.baseline;
     message.lines_received = lines_received_; message.checksum_errors = checksum_errors_; message.parse_errors = parse_errors_; message.interline_gap_errors = 0;
     status_pub_->publish(message);
   }
 
   std::string port_, frame_id_, log_directory_, receiver_role_, error_, rx_;
-  int baud_{115200}; double heading_offset_{0.0}; bool publish_heading_{true};
+  int baud_{115200}; double heading_offset_{0.0};
+  bool publish_heading_{true}, publish_unqualified_hdt_{false};
   Serial serial_; std::ofstream raw_; rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr fix_pub_;
   rclcpp::Publisher<geometry_msgs::msg::QuaternionStamped>::SharedPtr heading_pub_;

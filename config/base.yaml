@@ -6,5 +6,6 @@ rtk_test_recorder:
     receiver_role: base
     log_directory: ./data
     publish_heading: false
+    publish_unqualified_hdt: false
     correction_period_sec: 1.0
     line_timeout_sec: 2.0

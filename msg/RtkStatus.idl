@@ -22,6 +22,8 @@ module rtk_accuracy_test {
       int32 differential_station_id;
       uint16 satellites_used;
       double hdop;
+      boolean heading_valid;
+      string<32> heading_source;
       double heading;
       double pitch;
       double heading_std;

@@ -24,8 +24,15 @@ rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typ
 target_link_libraries(bx100_test_recorder "${cpp_typesupport_target}")
 
 install(TARGETS bx100_test_recorder DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY config launch scripts DESTINATION share/${PROJECT_NAME})
-install(PROGRAMS scripts/rtk_offline_analysis.py DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY config launch scripts DESTINATION share/${PROJECT_NAME}
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+)
+install(PROGRAMS
+  scripts/rtk_offline_analysis.py
+  scripts/serial_capture.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()

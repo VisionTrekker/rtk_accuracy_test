@@ -5,6 +5,9 @@ rtk_test_recorder:
     frame_id: rtk
     log_directory: ./data
     publish_heading: true
+    # NMEA HDT has no quality field. Keep it in /rtk/status but do not publish
+    # /heading from it unless its source and validity have been verified.
+    publish_unqualified_hdt: false
     heading_offset_deg: 0.0
     # The receiver's correction output period. Used only by offline status analysis.
     correction_period_sec: 1.0
