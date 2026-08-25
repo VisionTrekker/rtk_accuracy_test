@@ -101,23 +101,28 @@ GNGSVH COM1 3
 
 ## 🗃️ 数据记录规范
 
-每次测试建立独立会话目录，不覆盖已有数据：
+原始记录直接保存在仓库 `./data/`，统一文件名为 `角色_YYYYMMDD_HHMMSS.扩展名`，其中时间为采集机本地时间，角色至少使用 `rover`、`base_before` 和 `base_after`：
 
 ```text
-data/YYYYMMDD/session_N/
-├── metadata.yaml
-├── config_base.txt
-├── config_rover.txt
-├── base_before.raw
-├── rover.raw
-├── base_after.raw
-├── rosbag2/
-├── events.csv
-├── analysis/
-└── report.md
+data/
+├── metadata_YYYYMMDD_HHMMSS.yaml
+├── config_base_YYYYMMDD_HHMMSS.txt
+├── config_rover_YYYYMMDD_HHMMSS.txt
+├── base_before_YYYYMMDD_HHMMSS.raw
+├── base_before_YYYYMMDD_HHMMSS.tsv
+├── rover_YYYYMMDD_HHMMSS.raw
+├── rover_YYYYMMDD_HHMMSS.tsv
+├── base_after_YYYYMMDD_HHMMSS.raw
+├── base_after_YYYYMMDD_HHMMSS.tsv
+├── events_YYYYMMDD_HHMMSS.csv
+├── rover_YYYYMMDD_HHMMSS_gga_enu.csv
+├── rover_YYYYMMDD_HHMMSS_summary.txt
+├── rover_YYYYMMDD_HHMMSS_amap.html
+├── rosbag2_YYYYMMDD_HHMMSS/
+└── report_YYYYMMDD_HHMMSS.md
 ```
 
-`metadata.yaml` 至少包含：会话编号、日期时间、接收机序列号、固件版本、串口设备、波特率、天线间距、基准站自主优化坐标、坐标时间、路线版本、天气、测试人员和备注。原始串口日志必须逐行保存，并保留接收时间；解析错误、校验错误和串口断开也要写入日志。
+`metadata_*.yaml` 至少包含：会话编号、日期时间与时区、接收机序列号、固件版本、串口设备、波特率、天线间距、基准站自主优化坐标、坐标时间、路线版本、天气、测试人员和备注。原始串口日志必须逐行保存，并保留接收时间；解析错误、校验错误和串口断开也要写入日志。
 
 建议 rosbag 记录：`/fix`、`/heading`（如启用）、`/rtk/status`、`/rtk/raw`、小车里程计和 LIO 输出（若已有）。驱动应将 `BESTPOSA`、`GPGST`、`GPGSA`、`SATSINFOA`、`UNIHEADINGA` 的关键字段结构化发布到 `/rtk/status`，至少包括原始解状态、标准差、差分龄期、基站 ID、卫星数、DOP、时间戳和解析错误计数。
 
@@ -374,14 +379,14 @@ FIXED → FLOAT → DIFFERENTIAL/DGPS → SINGLE/AUTONOMOUS → NO_SOLUTION
 
 ## 📦 交付物与文件命名
 
-每个会话完成后生成：
+每次测试完成后生成与原始记录同样带时间戳的交付物：
 
-- `base_before.raw`、`rover.raw`、`base_after.raw`
-- `metadata.yaml`、`events.csv`、配置快照
+- `base_before_YYYYMMDD_HHMMSS.raw/.tsv`、`rover_YYYYMMDD_HHMMSS.raw/.tsv`、`base_after_YYYYMMDD_HHMMSS.raw/.tsv`
+- `metadata_YYYYMMDD_HHMMSS.yaml`、`events_YYYYMMDD_HHMMSS.csv`、配置快照
 - ENU 坐标 CSV（含 UTC、ROS 时间、状态、差分龄期、卫星数、DOP、标准差）
 - 静态点统计表、测试网距离误差表、闭环状态事件表
 - 轨迹图、状态随时间图、差分龄期图、卫星/DOP 图
-- `report.md`：方法、样本筛选、统计结果、异常解释和重测建议
+- `report_YYYYMMDD_HHMMSS.md`：方法、样本筛选、统计结果、异常解释和重测建议
 
 ## 📌 测试结论写法
 

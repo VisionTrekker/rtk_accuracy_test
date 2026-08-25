@@ -60,20 +60,22 @@ scp rtk_accuracy_test/scripts/serial_capture.py <user>@<rk3588_ip>:/home/<user>/
 
 ```bash
 mkdir -p ~/rtk_data/
+capture_stamp=$(date +%Y%m%d_%H%M%S)
 python3 ~/serial_capture.py \
   --port /dev/ttyACM0 \
   --baud 115200 \
   --duration 180 \
-  --raw-output ~/rtk_data/rover.raw \
-  --index-output ~/rtk_data/rover.tsv
+  --raw-output ~/rtk_data/rover_${capture_stamp}.raw \
+  --index-output ~/rtk_data/rover_${capture_stamp}.tsv
 ```
 
-持续录制时省略 `--duration`，按 `Ctrl-C` 停止。脚本生成完整字节流 `.raw` 与逐行主机接收时间索引 `.tsv`；接收机 UTC 仍在 `GGA`、`ZDA`、`TIMEA` 等原始消息中。
+持续录制时省略 `--duration`，按 `Ctrl-C` 停止。脚本生成完整字节流 `.raw` 与逐行主机时间索引 `.tsv`；接收机 UTC 仍在 `GGA`、`ZDA`、`TIMEA` 等原始消息中。文件名中的 `YYYYMMDD_HHMMSS` 为采集机本地时间；正式原始记录直接放在本仓库 `./data/`，不创建 `session_*` 或 `preflight_*` 子目录。
 
-取回数据时保留整个会话目录：
+取回数据时直接复制带时间戳的文件到 `./data/`：
 
 ```bash
-scp -r <user>@<rk3588_ip>:/home/<user>/rtk_data/preflight_001 ./data/
+scp <user>@<rk3588_ip>:'/home/<user>/rtk_data/rover_*.raw' ./data/
+scp <user>@<rk3588_ip>:'/home/<user>/rtk_data/rover_*.tsv' ./data/
 ```
 
 ## ROS 2 构建与移动站录制
@@ -93,17 +95,17 @@ ros2 run rtk_accuracy_test bx100_test_recorder --ros-args \
   -p log_directory:=./data/
 ```
 
-节点保存以角色和时间命名的 `rover_*.raw`，每行格式为 Unix 主机接收时间（ns）、制表符和原始串口行。基准站检查应在移动站测试前后分时进行，分别记录 `base_before.raw` 和`base_after.raw`；动态测试期间不可重新自主优化基准站。
+节点自动保存 `角色_YYYYMMDD_HHMMSS.raw`，时间为开发机本地时间；例如 `rover_20260824_153000.raw`。每行格式为 Unix 主机接收时间（ns）、制表符和原始串口行。基准站检查应在移动站测试前后分时进行，运行时分别设置 `receiver_role:=base_before` 和 `receiver_role:=base_after`，使文件名可追溯；动态测试期间不可重新自主优化基准站。
 
 ## 离线预检、初步分析与地图回放
 
 先清点目标机预检日志：
 
 ```bash
-python3 scripts/rtk_offline_analysis.py data/rover_*.raw \
+python3 scripts/rtk_offline_analysis.py data/rover_YYYYMMDD_HHMMSS.raw \
   --origin LAT LON HEIGHT \
-  --csv data/analysis/gga_enu.csv \
-  --summary data/analysis/summary.txt
+  --csv data/rover_YYYYMMDD_HHMMSS_gga_enu.csv \
+  --summary data/rover_YYYYMMDD_HHMMSS_summary.txt
 ```
 
 该工具当前输出 GGA/ENU 行、解状态计数、消息清点和 CRC 统计；它不是完整的外场精度统计工具。静态窗口、测试网距离、事件对齐和闭环统计要等目标机 `BESTPOSA` 字段顺序和状态枚举通过预检后再固化。
@@ -112,8 +114,8 @@ python3 scripts/rtk_offline_analysis.py data/rover_*.raw \
 
 ```bash
 python3 scripts/rtk_amap_view.py \
-  data/rover.raw \
-  data/analysis/rover_amap.html
+  data/rover_YYYYMMDD_HHMMSS.raw \
+  data/rover_YYYYMMDD_HHMMSS_amap.html
 ```
 
 页面只绘制 NMEA 校验和正确且经纬度完整的 GGA 样本，按 GGA 解状态分色并在状态变化处断线。浏览器中输入高德 Web JS API Key 后加载底图；WGS-84 坐标会转为 GCJ-02 用于绘制。起终点信息窗保留原始 WGS-84 坐标、高程、GGA UTC、解状态和可用的主机接收时间。
@@ -122,7 +124,7 @@ python3 scripts/rtk_amap_view.py \
 
 ## 数据与提交约定
 
-原始串口数据、rosbag、构建目录、日志、IDE 配置、压缩包和密钥文件均已由 `.gitignore`排除。会话目录不可覆盖，正式执行和报告口径以 [外场测试方案](docs/RTK_TEST_PLAN.md) 为准。提交前在本仓库内检查：
+原始串口数据、rosbag、构建目录、日志、IDE 配置、压缩包和密钥文件均已由 `.gitignore` 排除。原始记录统一使用 `角色_YYYYMMDD_HHMMSS.扩展名`，直接保存于 `./data/`。正式执行和报告口径以 [外场测试方案](docs/RTK_TEST_PLAN.md) 为准。提交前在本仓库内检查：
 
 ```bash
 git status --short
