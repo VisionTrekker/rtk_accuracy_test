@@ -44,8 +44,7 @@ def configure(fd, baud):
 
 
 def capture(args):
-    raw_path = Path(args.raw_output)
-    index_path = Path(args.index_output)
+    raw_path, index_path = output_paths(args.output_dir, args.receiver_role)
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -96,6 +95,16 @@ def capture(args):
         os.close(fd)
 
 
+def output_paths(output_dir, receiver_role):
+    stamp = time.strftime("%H%M%S", time.localtime())
+    directory = Path(output_dir)
+    raw_path = directory / f"{receiver_role}_{stamp}.raw"
+    index_path = directory / f"{receiver_role}_{stamp}.tsv"
+    if raw_path.exists() or index_path.exists():
+        raise ValueError(f"automatic output already exists: {raw_path}")
+    return raw_path, index_path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Record BX100 serial data without ROS or pyserial"
@@ -104,8 +113,17 @@ def main():
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--duration", type=float, default=0.0,
                         help="seconds; 0 means until Ctrl-C")
-    parser.add_argument("--raw-output", required=True)
-    parser.add_argument("--index-output", required=True)
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="output directory for automatically named raw/index files",
+    )
+    parser.add_argument(
+        "--receiver-role",
+        required=True,
+        choices=("base", "rover"),
+        help="receiver role used for automatically named raw/index files",
+    )
     args = parser.parse_args()
     try:
         capture(args)
